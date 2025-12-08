@@ -15,7 +15,7 @@ if (!destination) {
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 (async () => {
-  const res = await fetch("https://YOUR_DEPLOYED_URL.vercel.app/api/admin/generate", {
+  const res = await fetch("https://redirect-git-main-ifisgroup-91a9a92a.vercel.app/api/admin/generate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
