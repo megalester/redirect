@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Redirect Admin — Dark</title>
+<style>
+  :root{
+    --bg:#0b0f14; --card:#0f1720; --muted:#9aa7b2; --accent:#7c5cff; --danger:#ff5c7c; --text:#e6eef6;
+  }
+  body{background:linear-gradient(180deg,#061017 0%, #08141a 100%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+  .wrap{max-width:1100px;margin:28px auto;padding:18px;}
+  .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;}
+  h1{margin:0;font-weight:600}
+  .card{background:var(--card);padding:14px;border-radius:8px;margin-bottom:12px;box-shadow:0 6px 20px rgba(2,6,23,0.6);}
+  input,button,textarea{font-size:14px;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:#071018;color:var(--text);width:100%}
+  .row{display:flex;gap:10px}
+  .col{flex:1}
+  .muted{color:var(--muted);font-size:13px}
+  .btn{background:var(--accent);color:white;border:none;padding:10px 14px;border-radius:8px;cursor:pointer}
+  .btn.danger{background:var(--danger)}
+  table{width:100%;border-collapse:collapse;margin-top:10px}
+  th,td{padding:10px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.03);font-size:13px}
+  .small{font-size:12px;color:var(--muted)}
+  .flex{display:flex;gap:8px;align-items:center}
+  .center{display:flex;align-items:center;justify-content:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div>
+      <h1>Redirect Admin (Dark)</h1>
+      <div class="muted">Manage redirects · generate links · view click analytics</div>
+    </div>
+    <div id="authArea" class="flex">
+      <input id="password" placeholder="Admin password" style="width:240px" />
+      <button id="loginBtn" class="btn">Login</button>
+    </div>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="card">
+      <div class="row">
+        <div class="col">
+          <label class="small">Destination URL</label>
+          <input id="destUrl" placeholder="https://example.com/page" />
+        </div>
+        <div style="width:200px">
+          <label class="small"> </label>
+          <button id="genBtn" class="btn" style="width:100%">Generate</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px">Generated redirect will be auto-saved and available immediately.</div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Redirects</h3>
+      <div id="redirectsArea" class="small muted">Loading…</div>
+      <table id="redirectsTable" style="display:none">
+        <thead><tr><th>Short URL</th><th>Destination</th><th>Actions</th></tr></thead>
+        <tbody id="redirectsBody"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Analytics (last 200 clicks)</h3>
+      <div id="analyticsArea" class="small muted">Loading…</div>
+      <table id="analyticsTable" style="display:none">
+        <thead><tr><th>Time</th><th>Slug</th><th>Country</th><th>User-Agent</th></tr></thead>
+        <tbody id="analyticsBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const base = "";
+let token = null;
+const ADMIN_PASSWORD = ""; // not used client-side; user types it.
+
+function el(id){return document.getElementById(id)}
+
+async function postJSON(url, body){
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["x-admin-token"] = token;
+  const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  return resp.json();
+}
+async function getJSON(url){
+  const headers = {};
+  if (token) headers["x-admin-token"] = token;
+  const resp = await fetch(url, { method: "GET", headers });
+  return resp.json();
+}
+
+el("loginBtn").onclick = async () => {
+  const pwd = el("password").value.trim();
+  if (!pwd) return alert("Enter password");
+  const r = await postJSON("/api/admin/login", { password: pwd });
+  if (!r.ok) return alert(r.error || "Login failed");
+  token = r.token;
+  // hide login
+  document.getElementById("authArea").style.display = "none";
+  el("app").style.display = "block";
+  loadRedirects();
+  loadAnalytics();
+};
+
+el("genBtn").onclick = async () => {
+  const dest = el("destUrl").value.trim();
+  if (!dest) return alert("Enter destination URL");
+  const r = await postJSON("/api/admin/generate", { destination: dest });
+  if (!r.ok) return alert(r.error || "Failed");
+  alert("Created: " + r.redirectUrl);
+  el("destUrl").value = "";
+  loadRedirects();
+};
+
+async function loadRedirects(){
+  el("redirectsArea").innerText = "Loading…";
+  const r = await getJSON("/api/admin/list");
+  if (!r.ok) { el("redirectsArea").innerText = r.error || "Failed"; return; }
+  const entries = r.entries || [];
+  el("redirectsBody").innerHTML = "";
+  for (const e of entries.slice().reverse()){
+    const slug = e.slug;
+    const dest = e.destination;
+    const sub = slug.slice(0,2); // we don't know subdomain mapping from API, so show slug URL placeholder
+    // We should reconstruct using same subdomain list used server-side
+    const subdomains = ["gd2","yrn","8jr"];
+    const rndSub = subdomains[Math.abs(hashCode(slug)) % subdomains.length];
+    const domain = window.location.hostname.split(".").slice(-2).join(".");
+    const shortUrl = `https://${rndSub}.${domain}/${slug}`;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td style="max-width:320px;word-break:break-all"><a href="${shortUrl}" target="_blank">${shortUrl}</a></td>
+                    <td style="max-width:420px;word-break:break-all">${dest}</td>
+                    <td class="flex">
+                      <button data-slug="${slug}" class="btn" style="padding:6px 8px">Copy</button>
+                      <button data-slug="${slug}" class="btn danger" style="padding:6px 8px">Delete</button>
+                    </td>`;
+    el("redirectsBody").appendChild(tr);
+  }
+  el("redirectsArea").innerText = `${entries.length} redirect(s)`;
+  el("redirectsTable").style.display = entries.length ? "" : "none";
+
+  // wire buttons
+  document.querySelectorAll("button[data-slug]").forEach(btn=>{
+    btn.onclick = async (ev)=>{
+      const s = ev.currentTarget.getAttribute("data-slug");
+      if (ev.currentTarget.classList.contains("danger")) {
+        if(!confirm("Delete this redirect?")) return;
+        const res = await postJSON("/api/admin/delete", { slug: s });
+        if (!res.ok) return alert(res.error || "Failed");
+        loadRedirects();
+        loadAnalytics();
+        return;
+      }
+      // copy
+      const subdomains = ["gd2","yrn","8jr"];
+      const rndSub = subdomains[Math.abs(hashCode(s)) % subdomains.length];
+      const domain = window.location.hostname.split(".").slice(-2).join(".");
+      const url = `https://${rndSub}.${domain}/${s}`;
+      navigator.clipboard.writeText(url);
+      alert("Copied: " + url);
+    };
+  });
+}
+
+async function loadAnalytics(){
+  el("analyticsArea").innerText = "Loading…";
+  const r = await getJSON("/api/admin/stats");
+  if (!r.ok) { el("analyticsArea").innerText = r.error || "Failed"; return; }
+  const rows = r.analytics || [];
+  el("analyticsBody").innerHTML = "";
+  for (const rec of rows.slice(-200).reverse()){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${new Date(rec.timestamp).toLocaleString()}</td>
+                    <td style="max-width:220px;word-break:break-all">${rec.slug}</td>
+                    <td>${rec.country || "XX"}</td>
+                    <td style="max-width:420px;word-break:break-all">${escapeHtml(rec.ua || "")}</td>`;
+    el("analyticsBody").appendChild(tr);
+  }
+  el("analyticsArea").innerText = `${rows.length} clicks recorded`;
+  el("analyticsTable").style.display = rows.length ? "" : "none";
+}
+
+function hashCode(s){ // simple deterministic hash for UI subdomain choice
+  let h=0; for(let i=0;i<s.length;i++) h=(h<<5)-h+ s.charCodeAt(i)|0; return h;
+}
+function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+
+</script>
+</body>
+</html>
