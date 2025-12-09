@@ -117,21 +117,21 @@ el("genBtn").onclick = async () => {
   loadRedirects();
 };
 
+// Updated loadRedirects function
 async function loadRedirects(){
   el("redirectsArea").innerText = "Loading…";
   const r = await getJSON("/api/admin/list");
   if (!r.ok) { el("redirectsArea").innerText = r.error || "Failed"; return; }
   const entries = r.entries || [];
   el("redirectsBody").innerHTML = "";
+
   for (const e of entries.slice().reverse()){
     const slug = e.slug;
     const dest = e.destination;
-    const sub = slug.slice(0,2); // we don't know subdomain mapping from API, so show slug URL placeholder
-    // We should reconstruct using same subdomain list used server-side
-    const subdomains = ["gd2","yrn","8jr"];
-    const rndSub = subdomains[Math.abs(hashCode(slug)) % subdomains.length];
+    const sub = e.subdomain || "gd2"; // fallback subdomain
     const domain = window.location.hostname.split(".").slice(-2).join(".");
-    const shortUrl = `https://${rndSub}.${domain}/${slug}`;
+    const shortUrl = `https://${sub}.${domain}/${slug}`;
+
     const tr = document.createElement("tr");
     tr.innerHTML = `<td style="max-width:320px;word-break:break-all"><a href="${shortUrl}" target="_blank">${shortUrl}</a></td>
                     <td style="max-width:420px;word-break:break-all">${dest}</td>
@@ -141,10 +141,11 @@ async function loadRedirects(){
                     </td>`;
     el("redirectsBody").appendChild(tr);
   }
+
   el("redirectsArea").innerText = `${entries.length} redirect(s)`;
   el("redirectsTable").style.display = entries.length ? "" : "none";
 
-  // wire buttons
+  // Copy/Delete buttons
   document.querySelectorAll("button[data-slug]").forEach(btn=>{
     btn.onclick = async (ev)=>{
       const s = ev.currentTarget.getAttribute("data-slug");
@@ -156,11 +157,9 @@ async function loadRedirects(){
         loadAnalytics();
         return;
       }
-      // copy
-      const subdomains = ["gd2","yrn","8jr"];
-      const rndSub = subdomains[Math.abs(hashCode(s)) % subdomains.length];
-      const domain = window.location.hostname.split(".").slice(-2).join(".");
-      const url = `https://${rndSub}.${domain}/${s}`;
+      // Copy
+      const eObj = entries.find(r=>r.slug===s);
+      const url = `https://${eObj.subdomain || "gd2"}.${window.location.hostname.split(".").slice(-2).join(".")}/${s}`;
       navigator.clipboard.writeText(url);
       alert("Copied: " + url);
     };
@@ -185,9 +184,7 @@ async function loadAnalytics(){
   el("analyticsTable").style.display = rows.length ? "" : "none";
 }
 
-function hashCode(s){ // simple deterministic hash for UI subdomain choice
-  let h=0; for(let i=0;i<s.length;i++) h=(h<<5)-h+ s.charCodeAt(i)|0; return h;
-}
+function hashCode(s){ let h=0; for(let i=0;i<s.length;i++) h=(h<<5)-h+ s.charCodeAt(i)|0; return h; }
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
 
 </script>
