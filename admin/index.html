@@ -33,13 +33,9 @@
       <h1>Redirect Admin (Dark)</h1>
       <div class="muted">Manage redirects · generate links · view click analytics</div>
     </div>
-    <div id="authArea" class="flex">
-      <input id="password" placeholder="Admin password" style="width:240px" />
-      <button id="loginBtn" class="btn">Login</button>
-    </div>
   </div>
 
-  <div id="app" style="display:none">
+  <div id="app">
     <div class="card">
       <div class="row">
         <div class="col">
@@ -51,7 +47,7 @@
           <button id="genBtn" class="btn" style="width:100%">Generate</button>
         </div>
       </div>
-      <div class="muted" style="margin-top:8px">Generated redirect will be auto-saved and available immediately.</div>
+      <div class="muted" style="margin-top:8px">Generated redirect will be auto-saved locally.</div>
     </div>
 
     <div class="card">
@@ -74,118 +70,117 @@
   </div>
 </div>
 
-<script>
-const base = "";
-let token = null;
-const ADMIN_PASSWORD = ""; // not used client-side; user types it.
+<script type="module">
+import fs from 'fs';
+import path from 'path';
 
-function el(id){return document.getElementById(id)}
+// Local files
+const redirectsPath = path.resolve('./data/redirects.json');
+const analyticsPath = path.resolve('./data/analytics.json');
 
-async function postJSON(url, body){
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers["x-admin-token"] = token;
-  const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
-  return resp.json();
-}
-async function getJSON(url){
-  const headers = {};
-  if (token) headers["x-admin-token"] = token;
-  const resp = await fetch(url, { method: "GET", headers });
-  return resp.json();
+// Subdomains
+const subdomains = ["gd2","yrn","8jr"];
+function pickSubdomain(slug) {
+  let hash=0;
+  for(let i=0;i<slug.length;i++){hash=(hash<<5)-hash+slug.charCodeAt(i);hash|=0;}
+  return subdomains[Math.abs(hash)%subdomains.length];
 }
 
-el("loginBtn").onclick = async () => {
-  const pwd = el("password").value.trim();
-  if (!pwd) return alert("Enter password");
-  const r = await postJSON("/api/admin/login", { password: pwd });
-  if (!r.ok) return alert(r.error || "Login failed");
-  token = r.token;
-  // hide login
-  document.getElementById("authArea").style.display = "none";
-  el("app").style.display = "block";
-  loadRedirects();
-  loadAnalytics();
-};
+// Elements
+const destInput = document.getElementById('destUrl');
+const genBtn = document.getElementById('genBtn');
+const redirectsBody = document.getElementById('redirectsBody');
+const redirectsArea = document.getElementById('redirectsArea');
+const redirectsTable = document.getElementById('redirectsTable');
+const analyticsBody = document.getElementById('analyticsBody');
+const analyticsArea = document.getElementById('analyticsArea');
+const analyticsTable = document.getElementById('analyticsTable');
 
-el("genBtn").onclick = async () => {
-  const dest = el("destUrl").value.trim();
-  if (!dest) return alert("Enter destination URL");
-  const r = await postJSON("/api/admin/generate", { destination: dest });
-  if (!r.ok) return alert(r.error || "Failed");
-  alert("Created: " + r.redirectUrl);
-  el("destUrl").value = "";
-  loadRedirects();
-};
-
-// Updated loadRedirects function
-async function loadRedirects(){
-  el("redirectsArea").innerText = "Loading…";
-  const r = await getJSON("/api/admin/list");
-  if (!r.ok) { el("redirectsArea").innerText = r.error || "Failed"; return; }
-  const entries = r.entries || [];
-  el("redirectsBody").innerHTML = "";
-
-  for (const e of entries.slice().reverse()){
-    const slug = e.slug;
-    const dest = e.destination;
-    const sub = e.subdomain || "gd2"; // fallback subdomain
-    const domain = window.location.hostname.split(".").slice(-2).join(".");
-    const shortUrl = `https://${sub}.${domain}/${slug}`;
-
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td style="max-width:320px;word-break:break-all"><a href="${shortUrl}" target="_blank">${shortUrl}</a></td>
+// Load redirects
+function loadRedirects() {
+  let redirects = [];
+  try {
+    redirects = JSON.parse(fs.readFileSync(redirectsPath,'utf-8'));
+  } catch{}
+  redirectsBody.innerHTML='';
+  redirects.slice().reverse().forEach(e=>{
+    const slug=e.slug;
+    const dest=e.destination;
+    const sub=e.subdomain||'gd2';
+    const domain=window.location.hostname.split('.').slice(-2).join('.');
+    const shortUrl=`https://${sub}.${domain}/${slug}`;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td style="max-width:320px;word-break:break-all"><a href="${shortUrl}" target="_blank">${shortUrl}</a></td>
                     <td style="max-width:420px;word-break:break-all">${dest}</td>
                     <td class="flex">
                       <button data-slug="${slug}" class="btn" style="padding:6px 8px">Copy</button>
                       <button data-slug="${slug}" class="btn danger" style="padding:6px 8px">Delete</button>
                     </td>`;
-    el("redirectsBody").appendChild(tr);
-  }
+    redirectsBody.appendChild(tr);
+  });
+  redirectsArea.innerText=`${redirects.length} redirect(s)`;
+  redirectsTable.style.display=redirects.length?'':'none';
 
-  el("redirectsArea").innerText = `${entries.length} redirect(s)`;
-  el("redirectsTable").style.display = entries.length ? "" : "none";
-
-  // Copy/Delete buttons
-  document.querySelectorAll("button[data-slug]").forEach(btn=>{
-    btn.onclick = async (ev)=>{
-      const s = ev.currentTarget.getAttribute("data-slug");
-      if (ev.currentTarget.classList.contains("danger")) {
-        if(!confirm("Delete this redirect?")) return;
-        const res = await postJSON("/api/admin/delete", { slug: s });
-        if (!res.ok) return alert(res.error || "Failed");
+  document.querySelectorAll('button[data-slug]').forEach(btn=>{
+    btn.onclick=ev=>{
+      const s=ev.currentTarget.getAttribute('data-slug');
+      if(ev.currentTarget.classList.contains('danger')){
+        if(!confirm('Delete this redirect?')) return;
+        let redirectsDel=[];
+        try{redirectsDel=JSON.parse(fs.readFileSync(redirectsPath,'utf-8'))}catch{}
+        redirectsDel=redirectsDel.filter(r=>r.slug!==s);
+        fs.writeFileSync(redirectsPath,JSON.stringify(redirectsDel,null,2),'utf-8');
         loadRedirects();
         loadAnalytics();
         return;
       }
       // Copy
-      const eObj = entries.find(r=>r.slug===s);
-      const url = `https://${eObj.subdomain || "gd2"}.${window.location.hostname.split(".").slice(-2).join(".")}/${s}`;
+      let redirectsCopy=[];
+      try{redirectsCopy=JSON.parse(fs.readFileSync(redirectsPath,'utf-8'))}catch{}
+      const eObj=redirectsCopy.find(r=>r.slug===s);
+      const url=`https://${eObj.subdomain||"gd2"}.${window.location.hostname.split(".").slice(-2).join(".")}/${s}`;
       navigator.clipboard.writeText(url);
-      alert("Copied: " + url);
+      alert('Copied: '+url);
     };
   });
 }
 
-async function loadAnalytics(){
-  el("analyticsArea").innerText = "Loading…";
-  const r = await getJSON("/api/admin/stats");
-  if (!r.ok) { el("analyticsArea").innerText = r.error || "Failed"; return; }
-  const rows = r.analytics || [];
-  el("analyticsBody").innerHTML = "";
-  for (const rec of rows.slice(-200).reverse()){
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${new Date(rec.timestamp).toLocaleString()}</td>
+// Load analytics
+function loadAnalytics(){
+  let rows=[];
+  try{rows=JSON.parse(fs.readFileSync(analyticsPath,'utf-8'))}catch{}
+  analyticsBody.innerHTML='';
+  rows.slice(-200).reverse().forEach(rec=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${new Date(rec.timestamp).toLocaleString()}</td>
                     <td style="max-width:220px;word-break:break-all">${rec.slug}</td>
-                    <td>${rec.country || "XX"}</td>
-                    <td style="max-width:420px;word-break:break-all">${escapeHtml(rec.ua || "")}</td>`;
-    el("analyticsBody").appendChild(tr);
-  }
-  el("analyticsArea").innerText = `${rows.length} clicks recorded`;
-  el("analyticsTable").style.display = rows.length ? "" : "none";
+                    <td>${rec.country||'XX'}</td>
+                    <td style="max-width:420px;word-break:break-all">${rec.ua||''}</td>`;
+    analyticsBody.appendChild(tr);
+  });
+  analyticsArea.innerText=`${rows.length} clicks recorded`;
+  analyticsTable.style.display=rows.length?'':'none';
 }
 
-function hashCode(s){ let h=0; for(let i=0;i<s.length;i++) h=(h<<5)-h+ s.charCodeAt(i)|0; return h; }
-function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+// Generate redirect locally
+genBtn.onclick=()=>{
+  const destination=destInput.value.trim();
+  if(!destination) return alert('Enter destination URL');
+  const slug=Math.random().toString(36).substring(2,8);
+  const subdomain=pickSubdomain(slug);
+
+  let redirects=[];
+  try{redirects=JSON.parse(fs.readFileSync(redirectsPath,'utf-8'))}catch{}
+  redirects.push({slug,destination,subdomain});
+  fs.writeFileSync(redirectsPath,JSON.stringify(redirects,null,2),'utf-8');
+  alert('✅ Redirect saved locally!\nSlug: '+slug);
+  destInput.value='';
+  loadRedirects();
+};
+
+// Initialize
+loadRedirects();
+loadAnalytics();
 
 </script>
 </body>
