@@ -1,3 +1,4 @@
-{
-  "8jr123abc": "https://google.com"
-}
+[
+  { "slug": "8jr123abc", "destination": "https://google.com" },
+  { "slug": "gd2abcd1234", "destination": "https://example.com" }
+]
