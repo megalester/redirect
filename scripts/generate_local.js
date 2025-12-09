@@ -1,52 +1,104 @@
+/**
+ * Usage:
+ * node scripts/generate_local.js https://example.com/page
+ *
+ * Requires env ADMIN_TOKEN (your admin token from Vercel)
+ */
+
+import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
 
-// Define your subdomains
-const subdomains = ["gd2", "yrn", "8jr", "hge4"];
-
-// Destination URL from command line
 const destination = process.argv[2];
 if (!destination) {
   console.error("Usage: node scripts/generate_local.js <destinationUrl>");
   process.exit(1);
 }
 
-// Path to redirects.json
-const redirectsFile = path.join(process.cwd(), "data", "redirects.json");
+// Use your latest working token
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "558d280cbd595086c711cca7789b1be4";
 
-// Load existing redirects
-let redirects = [];
-try {
-  const data = fs.readFileSync(redirectsFile, "utf-8");
-  redirects = JSON.parse(data);
-  if (!Array.isArray(redirects)) redirects = [];
-} catch (err) {
-  console.warn("redirects.json missing or invalid, creating new one...");
-  redirects = [];
+// Path to your local redirects file
+const redirectsPath = path.resolve("data/redirects.json");
+
+// Subdomains list for short URLs
+const subdomains = ["gd2", "yrn", "8jr"];
+
+// Generate a deterministic subdomain from slug (same as admin)
+function pickSubdomain(slug) {
+  let hash = 0;
+  for (let i = 0; i < slug.length; i++) {
+    hash = (hash << 5) - hash + slug.charCodeAt(i);
+    hash |= 0;
+  }
+  return subdomains[Math.abs(hash) % subdomains.length];
 }
 
-// Generate a unique slug (6 chars)
-function generateSlug() {
-  let slug;
-  do {
-    slug = Math.random().toString(36).substring(2, 8);
-  } while (redirects.find(r => r.slug === slug));
-  return slug;
+// Generate a random slug similar to admin panel
+function generateSlug(length = 6) {
+  return Math.random().toString(36).substring(2, 2 + length);
 }
 
-const slug = generateSlug();
+// Ensure folder exists
+const redirectsDir = path.dirname(redirectsPath);
+if (!fs.existsSync(redirectsDir)) fs.mkdirSync(redirectsDir, { recursive: true });
 
-// Add new redirect
-redirects.push({ slug, destination });
+// Ensure JSON file exists
+if (!fs.existsSync(redirectsPath)) fs.writeFileSync(redirectsPath, "[]", "utf-8");
 
-// Save back
-fs.writeFileSync(redirectsFile, JSON.stringify(redirects, null, 2), "utf-8");
+(async () => {
+  let slug, subdomain;
 
-// Pick a random subdomain
-const rndSub = subdomains[Math.floor(Math.random() * subdomains.length)];
-const shortUrl = `https://${rndSub}.example.com/${slug}`;
+  try {
+    // Call Vercel API to generate redirect
+    const res = await fetch("https://redirect-phi-one.vercel.app/api/admin/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-token": ADMIN_TOKEN
+      },
+      body: JSON.stringify({ destination })
+    });
 
-console.log("✅ Redirect generated successfully!");
-console.log(`Slug: ${slug}`);
-console.log(`Destination: ${destination}`);
-console.log(`Short URL: ${shortUrl}`);
+    const json = await res.json();
+    if (json.ok) {
+      slug = json.slug || json.redirectUrl?.split("/").pop() || generateSlug();
+      subdomain = pickSubdomain(slug);
+      console.log("✅ Redirect generated via API!");
+    } else {
+      console.warn("API failed, falling back to local redirect:", json.error);
+      slug = generateSlug();
+      subdomain = pickSubdomain(slug);
+    }
+
+  } catch (err) {
+    console.warn("API error, falling back to local redirect:", err.message);
+    slug = generateSlug();
+    subdomain = pickSubdomain(slug);
+  }
+
+  // Read existing redirects.json
+  let redirects = [];
+  try {
+    const data = fs.readFileSync(redirectsPath, "utf-8");
+    redirects = JSON.parse(data);
+  } catch (err) {
+    console.warn("Warning: failed to parse redirects.json, starting fresh");
+    redirects = [];
+  }
+
+  // Add new redirect
+  redirects.push({ slug, destination, subdomain });
+
+  // Save back to redirects.json safely
+  try {
+    fs.writeFileSync(redirectsPath, JSON.stringify(redirects, null, 2), "utf-8");
+    console.log("✅ Redirect saved locally!");
+    console.log("Slug:", slug);
+    console.log("Destination:", destination);
+    console.log(`Short URL (example): https://${subdomain}.yourdomain.com/${slug}`);
+  } catch (err) {
+    console.error("Failed to save redirect:", err);
+    process.exit(1);
+  }
+})();
