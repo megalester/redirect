@@ -15,7 +15,7 @@ if (!destination) {
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 (async () => {
-  const res = await fetch("https://redirect-git-main-ifisgroup-91a9a92a.vercel.app/api/admin/generate", {
+  const res = await fetch("https://redirect-phi-one.vercel.app/api/admin/generate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -23,6 +23,7 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
     },
     body: JSON.stringify({ destination })
   });
+
   const json = await res.json();
   console.log(json);
 })();
