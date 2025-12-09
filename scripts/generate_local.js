@@ -48,9 +48,10 @@ if (!fs.existsSync(redirectsPath)) fs.writeFileSync(redirectsPath, "[]", "utf-8"
 
 (async () => {
   let slug, subdomain;
+  let apiUsed = false;
 
   try {
-    // Call Vercel API to generate redirect
+    // Attempt API call
     const res = await fetch("https://redirect-phi-one.vercel.app/api/admin/generate", {
       method: "POST",
       headers: {
@@ -64,13 +65,13 @@ if (!fs.existsSync(redirectsPath)) fs.writeFileSync(redirectsPath, "[]", "utf-8"
     if (json.ok) {
       slug = json.slug || json.redirectUrl?.split("/").pop() || generateSlug();
       subdomain = pickSubdomain(slug);
+      apiUsed = true;
       console.log("✅ Redirect generated via API!");
     } else {
       console.warn("API failed, falling back to local redirect:", json.error);
       slug = generateSlug();
       subdomain = pickSubdomain(slug);
     }
-
   } catch (err) {
     console.warn("API error, falling back to local redirect:", err.message);
     slug = generateSlug();
@@ -88,7 +89,7 @@ if (!fs.existsSync(redirectsPath)) fs.writeFileSync(redirectsPath, "[]", "utf-8"
   }
 
   // Add new redirect
-  redirects.push({ slug, destination, subdomain });
+  redirects.push({ slug, destination, subdomain, apiUsed });
 
   // Save back to redirects.json safely
   try {
