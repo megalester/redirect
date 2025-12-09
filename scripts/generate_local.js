@@ -2,12 +2,15 @@
  * Usage:
  * node scripts/generate_local.js https://example.com/page
  *
- * Requires env ADMIN_TOKEN (your admin token from Vercel)
+ * Requires env:
+ * - ADMIN_TOKEN (your admin token from Vercel)
+ * - REDIS_URL (your Redis/Upstash URL, optional)
  */
 
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
+import { createClient } from "redis";
 
 const destination = process.argv[2];
 if (!destination) {
@@ -15,16 +18,18 @@ if (!destination) {
   process.exit(1);
 }
 
-// Use your latest working token
+// Admin token
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "558d280cbd595086c711cca7789b1be4";
 
-// Path to your local redirects file
+// Redis URL (optional)
+const REDIS_URL = process.env.REDIS_URL;
+
+// Local fallback file
 const redirectsPath = path.resolve("data/redirects.json");
+if (!fs.existsSync(redirectsPath)) fs.writeFileSync(redirectsPath, "[]", "utf-8");
 
-// Subdomains list for short URLs
+// Subdomains
 const subdomains = ["gd2", "yrn", "8jr"];
-
-// Generate a deterministic subdomain from slug (same as admin)
 function pickSubdomain(slug) {
   let hash = 0;
   for (let i = 0; i < slug.length; i++) {
@@ -34,24 +39,30 @@ function pickSubdomain(slug) {
   return subdomains[Math.abs(hash) % subdomains.length];
 }
 
-// Generate a random slug similar to admin panel
+// Generate a random slug
 function generateSlug(length = 6) {
   return Math.random().toString(36).substring(2, 2 + length);
 }
 
-// Ensure folder exists
-const redirectsDir = path.dirname(redirectsPath);
-if (!fs.existsSync(redirectsDir)) fs.mkdirSync(redirectsDir, { recursive: true });
-
-// Ensure JSON file exists
-if (!fs.existsSync(redirectsPath)) fs.writeFileSync(redirectsPath, "[]", "utf-8");
+// Cleanup old redirects (>30 days)
+function cleanupLocalRedirects() {
+  let redirects = [];
+  try { redirects = JSON.parse(fs.readFileSync(redirectsPath, "utf-8")); } catch {}
+  const now = Date.now();
+  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+  redirects = redirects.filter(r => !r.timestamp || now - r.timestamp <= THIRTY_DAYS);
+  fs.writeFileSync(redirectsPath, JSON.stringify(redirects, null, 2), "utf-8");
+}
 
 (async () => {
-  let slug, subdomain;
-  let apiUsed = false;
+  cleanupLocalRedirects();
 
+  let slug = generateSlug();
+  let subdomain = pickSubdomain(slug);
+  const timestamp = Date.now();
+
+  // Try saving via API first
   try {
-    // Attempt API call
     const res = await fetch("https://redirect-phi-one.vercel.app/api/admin/generate", {
       method: "POST",
       headers: {
@@ -63,43 +74,65 @@ if (!fs.existsSync(redirectsPath)) fs.writeFileSync(redirectsPath, "[]", "utf-8"
 
     const json = await res.json();
     if (json.ok) {
-      slug = json.slug || json.redirectUrl?.split("/").pop() || generateSlug();
+      slug = json.slug || slug;
       subdomain = pickSubdomain(slug);
-      apiUsed = true;
       console.log("✅ Redirect generated via API!");
     } else {
-      console.warn("API failed, falling back to local redirect:", json.error);
-      slug = generateSlug();
-      subdomain = pickSubdomain(slug);
+      console.warn("⚠️ API failed, falling back to Redis/local:", json.error);
     }
   } catch (err) {
-    console.warn("API error, falling back to local redirect:", err.message);
-    slug = generateSlug();
-    subdomain = pickSubdomain(slug);
+    console.warn("⚠️ API error, falling back to Redis/local:", err.message);
   }
 
-  // Read existing redirects.json
-  let redirects = [];
-  try {
-    const data = fs.readFileSync(redirectsPath, "utf-8");
-    redirects = JSON.parse(data);
-  } catch (err) {
-    console.warn("Warning: failed to parse redirects.json, starting fresh");
-    redirects = [];
-  }
+  if (REDIS_URL) {
+    // Connect to Redis
+    const redis = createClient({ url: REDIS_URL });
+    redis.on("error", (err) => console.error("Redis Client Error:", err));
+    await redis.connect();
 
-  // Add new redirect
-  redirects.push({ slug, destination, subdomain, apiUsed });
+    try {
+      const key = `redirect:${slug}`;
+      await redis.set(key, JSON.stringify({ slug, destination, subdomain, timestamp }));
+      console.log("✅ Redirect saved in Redis!");
 
-  // Save back to redirects.json safely
-  try {
+      // Cleanup old Redis keys (optional, scan & delete)
+      const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+      let cursor = 0;
+      do {
+        const result = await redis.scan(cursor, { MATCH: "redirect:*", COUNT: 100 });
+        cursor = parseInt(result.cursor);
+        for (const key of result.keys) {
+          const val = await redis.get(key);
+          if (val) {
+            const obj = JSON.parse(val);
+            if (obj.timestamp && Date.now() - obj.timestamp > THIRTY_DAYS) {
+              await redis.del(key);
+            }
+          }
+        }
+      } while (cursor !== 0);
+
+    } catch (err) {
+      console.warn("⚠️ Failed to save in Redis, saving locally:", err.message);
+
+      let redirects = [];
+      try { redirects = JSON.parse(fs.readFileSync(redirectsPath, "utf-8")); } catch {}
+      redirects.push({ slug, destination, subdomain, timestamp });
+      fs.writeFileSync(redirectsPath, JSON.stringify(redirects, null, 2), "utf-8");
+      console.log("✅ Redirect saved locally!");
+    }
+
+    await redis.quit();
+  } else {
+    // Save locally
+    let redirects = [];
+    try { redirects = JSON.parse(fs.readFileSync(redirectsPath, "utf-8")); } catch {}
+    redirects.push({ slug, destination, subdomain, timestamp });
     fs.writeFileSync(redirectsPath, JSON.stringify(redirects, null, 2), "utf-8");
     console.log("✅ Redirect saved locally!");
-    console.log("Slug:", slug);
-    console.log("Destination:", destination);
-    console.log(`Short URL (example): https://${subdomain}.yourdomain.com/${slug}`);
-  } catch (err) {
-    console.error("Failed to save redirect:", err);
-    process.exit(1);
   }
+
+  console.log("Slug:", slug);
+  console.log("Destination:", destination);
+  console.log(`Short URL (example): https://${subdomain}.yourdomain.com/${slug}`);
 })();

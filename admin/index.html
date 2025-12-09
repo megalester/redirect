@@ -47,7 +47,7 @@
           <button id="genBtn" class="btn" style="width:100%">Generate</button>
         </div>
       </div>
-      <div class="muted" style="margin-top:8px">Generated redirect will be auto-saved locally.</div>
+      <div class="muted" style="margin-top:8px">Generated redirect will be auto-saved locally and on server if possible.</div>
     </div>
 
     <div class="card">
@@ -75,16 +75,8 @@ import fs from 'fs';
 import path from 'path';
 
 // Local files
-const redirectsPath = path.resolve('./data/redirects.json');
-const analyticsPath = path.resolve('./data/analytics.json');
-
-// Subdomains
-const subdomains = ["gd2","yrn","8jr"];
-function pickSubdomain(slug) {
-  let hash=0;
-  for(let i=0;i<slug.length;i++){hash=(hash<<5)-hash+slug.charCodeAt(i);hash|=0;}
-  return subdomains[Math.abs(hash)%subdomains.length];
-}
+const redirectsPath = './data/redirects.json';
+const analyticsPath = './data/analytics.json';
 
 // Elements
 const destInput = document.getElementById('destUrl');
@@ -96,17 +88,31 @@ const analyticsBody = document.getElementById('analyticsBody');
 const analyticsArea = document.getElementById('analyticsArea');
 const analyticsTable = document.getElementById('analyticsTable');
 
-// Load redirects
-function loadRedirects() {
-  let redirects = [];
-  try {
-    redirects = JSON.parse(fs.readFileSync(redirectsPath,'utf-8'));
-  } catch{}
+// Subdomains
+const subdomains = ["gd2","yrn","8jr"];
+function pickSubdomain(slug) {
+  let hash=0;
+  for(let i=0;i<slug.length;i++){hash=(hash<<5)-hash+slug.charCodeAt(i);hash|=0;}
+  return subdomains[Math.abs(hash)%subdomains.length];
+}
+
+// Load local redirects and ignore old (>30 days)
+function loadLocalRedirects() {
+  let redirects=[];
+  try{redirects=JSON.parse(fs.readFileSync(redirectsPath,'utf-8'))}catch{}
+  const now = Date.now();
+  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+  redirects = redirects.filter(r => !r.timestamp || now - r.timestamp <= THIRTY_DAYS);
+  return redirects;
+}
+
+// Render redirects table
+function renderRedirects(redirects){
   redirectsBody.innerHTML='';
-  redirects.slice().reverse().forEach(e=>{
-    const slug=e.slug;
-    const dest=e.destination;
-    const sub=e.subdomain||'gd2';
+  redirects.slice().reverse().forEach(r=>{
+    const slug=r.slug;
+    const dest=r.destination;
+    const sub=r.subdomain||'gd2';
     const domain=window.location.hostname.split('.').slice(-2).join('.');
     const shortUrl=`https://${sub}.${domain}/${slug}`;
     const tr=document.createElement('tr');
@@ -120,35 +126,16 @@ function loadRedirects() {
   });
   redirectsArea.innerText=`${redirects.length} redirect(s)`;
   redirectsTable.style.display=redirects.length?'':'none';
-
-  document.querySelectorAll('button[data-slug]').forEach(btn=>{
-    btn.onclick=ev=>{
-      const s=ev.currentTarget.getAttribute('data-slug');
-      if(ev.currentTarget.classList.contains('danger')){
-        if(!confirm('Delete this redirect?')) return;
-        let redirectsDel=[];
-        try{redirectsDel=JSON.parse(fs.readFileSync(redirectsPath,'utf-8'))}catch{}
-        redirectsDel=redirectsDel.filter(r=>r.slug!==s);
-        fs.writeFileSync(redirectsPath,JSON.stringify(redirectsDel,null,2),'utf-8');
-        loadRedirects();
-        loadAnalytics();
-        return;
-      }
-      // Copy
-      let redirectsCopy=[];
-      try{redirectsCopy=JSON.parse(fs.readFileSync(redirectsPath,'utf-8'))}catch{}
-      const eObj=redirectsCopy.find(r=>r.slug===s);
-      const url=`https://${eObj.subdomain||"gd2"}.${window.location.hostname.split(".").slice(-2).join(".")}/${s}`;
-      navigator.clipboard.writeText(url);
-      alert('Copied: '+url);
-    };
-  });
 }
 
-// Load analytics
+// Load analytics and ignore old (>30 days)
 function loadAnalytics(){
   let rows=[];
   try{rows=JSON.parse(fs.readFileSync(analyticsPath,'utf-8'))}catch{}
+  const now = Date.now();
+  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+  rows = rows.filter(r => !r.timestamp || now - r.timestamp <= THIRTY_DAYS);
+
   analyticsBody.innerHTML='';
   rows.slice(-200).reverse().forEach(rec=>{
     const tr=document.createElement('tr');
@@ -168,20 +155,27 @@ genBtn.onclick=()=>{
   if(!destination) return alert('Enter destination URL');
   const slug=Math.random().toString(36).substring(2,8);
   const subdomain=pickSubdomain(slug);
+  const timestamp = Date.now();
 
   let redirects=[];
   try{redirects=JSON.parse(fs.readFileSync(redirectsPath,'utf-8'))}catch{}
-  redirects.push({slug,destination,subdomain});
+  redirects.push({slug,destination,subdomain,timestamp});
   fs.writeFileSync(redirectsPath,JSON.stringify(redirects,null,2),'utf-8');
+
   alert('✅ Redirect saved locally!\nSlug: '+slug);
   destInput.value='';
   loadRedirects();
-};
+  loadAnalytics();
+}
 
 // Initialize
+function loadRedirects(){
+  const redirects = loadLocalRedirects();
+  renderRedirects(redirects);
+}
+
 loadRedirects();
 loadAnalytics();
-
 </script>
 </body>
 </html>

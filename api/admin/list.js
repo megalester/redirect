@@ -1,34 +1,51 @@
-import fs from "fs";
-import path from "path";
+/**
+ * Fetch all redirects from Redis
+ * Endpoint: /api/admin/list
+ *
+ * Requires env:
+ * - ADMIN_TOKEN
+ * - REDIS_URL
+ */
 
-const DATA_DIR = path.resolve("./data");
-const REDIRECT_FILE = path.join(DATA_DIR, "redirects.json");
+import { createClient } from "redis";
 
-function loadJson(filePath, fallback) {
-  try {
-    if (!fs.existsSync(filePath)) return fallback;
-    return JSON.parse(fs.readFileSync(filePath, "utf8") || JSON.stringify(fallback));
-  } catch (e) {
-    console.error("loadJson", e);
-    return fallback;
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "558d280cbd595086c711cca7789b1be4";
+const REDIS_URL = process.env.REDIS_URL;
+
+export default async function handler(req, res) {
+  if (req.method !== "GET") {
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
-}
 
-function checkAuth(req) {
-  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
   const token = req.headers["x-admin-token"];
-  return Boolean(ADMIN_PASSWORD && token);
-}
+  if (!token || token !== ADMIN_TOKEN) {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
 
-export default function handler(req, res) {
-  if (req.method !== "GET") return res.status(405).send("Method Not Allowed");
-  if (!checkAuth(req)) return res.status(401).json({ ok: false, error: "Not authorized" });
+  if (!REDIS_URL) {
+    return res.status(500).json({ ok: false, error: "REDIS_URL not configured" });
+  }
 
-  const redirects = loadJson(REDIRECT_FILE, {});
-  // return as array for UI
-  const entries = Object.keys(redirects).map((slug) => ({
-    slug,
-    destination: redirects[slug]
-  }));
-  res.json({ ok: true, entries });
+  const redis = createClient({ url: REDIS_URL });
+  redis.on("error", (err) => console.error("Redis Client Error", err));
+
+  try {
+    await redis.connect();
+
+    // Fetch all keys matching "redirect:*"
+    const keys = await redis.keys("redirect:*");
+    const redirects = [];
+
+    for (const key of keys) {
+      const data = await redis.get(key);
+      if (data) redirects.push(JSON.parse(data));
+    }
+
+    await redis.quit();
+    res.status(200).json({ ok: true, redirects });
+  } catch (err) {
+    console.error("Failed to fetch redirects:", err);
+    await redis.quit();
+    res.status(500).json({ ok: false, error: err.message });
+  }
 }

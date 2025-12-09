@@ -1,4 +1,37 @@
 [
+<<<<<<< HEAD
   { "slug": "8jr123abc", "destination": "https://google.com" },
   { "slug": "gd2abcd1234", "destination": "https://example.com" }
 ]
+=======
+  {
+    "test": "ok"
+  },
+  {
+    "slug": "6lx2xi",
+    "destination": "https://example.com/page",
+    "subdomain": "8jr"
+  },
+  {
+    "slug": "efwder",
+    "destination": "https://example.com/page",
+    "subdomain": "gd2"
+  },
+  {
+    "slug": "89d5ke",
+    "destination": "https://example.com/page",
+    "subdomain": "gd2"
+  },
+  {
+    "slug": "e2n82p",
+    "destination": "https://example.com/page",
+    "subdomain": "8jr"
+  },
+  {
+    "slug": "y9qemb",
+    "destination": "https://example.com/page",
+    "subdomain": "8jr",
+    "savedViaAPI": false
+  }
+]
+>>>>>>> 465f7da (Save local changes before pulling)
